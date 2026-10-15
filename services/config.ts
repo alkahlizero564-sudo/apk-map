@@ -1,1 +1,1 @@
-export const REPO = "alkahlizero564-sudo/apk-fact";
+export const REPO = "alkahlizero564-sudo/apk-map";
