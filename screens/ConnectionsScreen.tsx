@@ -5,19 +5,33 @@ import { testGithubConnection } from "../services/github";
 import { testSupabaseConnection } from "../services/supabase";
 import { testGeminiConnection, testClaudeConnection } from "../services/ai";
 
-function Field({ label, storeKey, secure = true, placeholder }: { label: string; storeKey: string; secure?: boolean; placeholder?: string }) {
+function Field({
+  label,
+  storeKey,
+  secure = true,
+  placeholder,
+  multiline = false,
+}: {
+  label: string;
+  storeKey: string;
+  secure?: boolean;
+  placeholder?: string;
+  multiline?: boolean;
+}) {
   const [value, setValue] = useState("");
   const [saved, setSaved] = useState(false);
   return (
     <View style={{ marginBottom: 16 }}>
       <Text style={styles.label}>{label}</Text>
       <TextInput
-        style={styles.input}
+        style={[styles.input, multiline && { minHeight: 90, textAlignVertical: "top" }]}
         value={value}
         onChangeText={(t) => { setValue(t); setSaved(false); }}
         placeholder={placeholder}
         secureTextEntry={secure}
         autoCapitalize="none"
+        autoCorrect={false}
+        multiline={multiline}
       />
       <TouchableOpacity
         style={styles.saveBtn}
@@ -99,8 +113,6 @@ export default function ConnectionsScreen() {
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.section}>GitHub</Text>
       <Field label="Personal Access Token" storeKey="GITHUB_TOKEN" placeholder="ghp_..." />
-      <Field label="مستودع التطبيق الأول (username/repo)" storeKey="GITHUB_REPO_1" secure={false} placeholder="username/app-one" />
-      <Field label="مستودع التطبيق الثاني (username/repo)" storeKey="GITHUB_REPO_2" secure={false} placeholder="username/app-two" />
       <TouchableOpacity style={styles.testBtn} onPress={handleTestGithub}>
         <Text style={{ color: "white" }}>اختبار اتصال GitHub</Text>
       </TouchableOpacity>
@@ -121,6 +133,18 @@ export default function ConnectionsScreen() {
 
       <View style={{ height: 24 }} />
 
+      <Text style={styles.section}>Firebase</Text>
+      <Text style={styles.hint}>الصق إعدادات تطبيق الويب (firebaseConfig) كما هي من Firebase.</Text>
+      <Field
+        label="Firebase Config"
+        storeKey="FIREBASE_CONFIG"
+        secure={false}
+        multiline
+        placeholder='apiKey: "...", projectId: "..."'
+      />
+
+      <View style={{ height: 24 }} />
+
       <Text style={styles.section}>Gemini</Text>
       <Field label="API Key" storeKey="GEMINI_API_KEY" placeholder="AIza..." />
       <TouchableOpacity style={styles.testBtn} onPress={handleTestGemini}>
@@ -138,6 +162,8 @@ export default function ConnectionsScreen() {
       </TouchableOpacity>
       {loadingClaude && <ActivityIndicator style={{ marginTop: 8 }} />}
       {claudeResult && <Text style={styles.result}>{claudeResult}</Text>}
+
+      <View style={{ height: 40 }} />
     </ScrollView>
   );
 }
