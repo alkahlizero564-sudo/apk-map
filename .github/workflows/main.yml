@@ -1,4 +1,4 @@
-name: EAS Build
+name: Build Tool APK
 
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   build:
-    name: Build APK locally
+    name: Build APK with Gradle
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -37,22 +37,22 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Setup EAS
-        uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          packager: npm
-          token: ${{ secrets.EXPO_TOKEN }}
-
-      - name: Build APK on this runner (free)
+      - name: Generate Android project
         env:
           CI: "1"
-        run: eas build --platform android --profile preview --local --non-interactive --output ./app.apk
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Build release APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
 
       - name: Publish APK as a Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          cp android/app/build/outputs/apk/release/app-release.apk app.apk
           gh release create "apk-${{ github.run_number }}" app.apk \
             --title "APK #${{ github.run_number }}" \
             --notes "Built from ${{ github.sha }}"
