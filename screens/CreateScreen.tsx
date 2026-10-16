@@ -4,37 +4,27 @@ import {
   ScrollView, ActivityIndicator, Modal,
 } from "react-native";
 import { WebView } from "react-native-webview";
-import { pushFile, listWorkflowRuns, latestRunId, getFileText, getFailureLog } from "../services/github";
+import { pushFile, getFileText } from "../services/github";
+import { generateApp } from "../services/generate2";
+import { linkApps, LinkKind } from "../services/link";
 import { REPO } from "../services/config";
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function cleanName(n: string) {
   return n.trim().toLowerCase().replace(/[^a-z0-9-]/g, "");
-}
-
-async function waitForRun(prevId: number) {
-  const started = Date.now();
-  while (Date.now() - started < 4 * 60 * 1000) {
-    await sleep(5000);
-    const runs = await listWorkflowRuns(REPO, "generate.yml");
-    const run = runs.find((r: any) => r.id > prevId);
-    if (run && run.status === "completed") return run;
-  }
-  return null;
 }
 
 type Kind = "create" | "edit";
 
 type BoxProps = {
   title: string;
+  name: string;
+  setName: (s: string) => void;
   busy: boolean;
   setBusy: (b: boolean) => void;
   onPreview: (name: string) => void;
 };
 
-function AppBox({ title, busy, setBusy, onPreview }: BoxProps) {
-  const [name, setName] = useState("");
+function AppBox({ title, name, setName, busy, setBusy, onPreview }: BoxProps) {
   const [description, setDescription] = useState("");
   const [editOpen, setEditOpen] = useState(false);
   const [editText, setEditText] = useState("");
@@ -62,40 +52,26 @@ function AppBox({ title, busy, setBusy, onPreview }: BoxProps) {
     setBusy(true);
     setLoading(kind);
     try {
-      if (kind === "edit") {
-        const existing = await getFileText(REPO, `apps/${n}/index.html`);
-        if (!existing) {
-          addLog("❌ التطبيق ده مش موجود. اعمل إنشاء الأول.");
-          return;
-        }
-      }
-
-      const prevId = await latestRunId(REPO, "generate.yml");
-
-      addLog("⏳ بيتم إرسال الطلب...");
-      const content = `${n}\n${text}\n\n(request id: ${Date.now()})\n`;
-      await pushFile(REPO, "request.txt", content, `${kind === "edit" ? "Edit" : "Create"}: ${n}`);
-      addLog("✅ تم إرسال الطلب.");
-      addLog(kind === "edit" ? "⏳ بيتعدّل الكود... (من نصف دقيقة لدقيقتين)" : "⏳ بيتولّد الكود... (من نصف دقيقة لدقيقتين)");
-
-      const r = await waitForRun(prevId);
-      if (!r) {
-        addLog("⚠️ أخذ وقت طويل. جرّب المعاينة بعد شوية.");
+      const existing = await getFileText(REPO, `apps/${n}/index.html`);
+      if (kind === "edit" && !existing) {
+        addLog("❌ التطبيق ده مش موجود. اعمل إنشاء الأول.");
         return;
       }
-      if (r.conclusion !== "success") {
-        addLog("❌ فشل.");
-        const tail = await getFailureLog(REPO, r.id);
-        if (tail) addLog(tail);
+      if (kind === "create" && existing) {
+        addLog("❌ الاسم ده موجود. استخدم اسم جديد، أو زر تعديل الكود.");
         return;
       }
 
-      const html = await getFileText(REPO, `apps/${n}/index.html`);
-      if (!html) {
-        addLog("⚠️ نجح لكن الملف ما ظهر. جرّب المعاينة بعد شوية.");
-        return;
-      }
-      addLog(kind === "edit" ? `✅ اتعدّل وارتفع: apps/${n}/index.html` : `✅ اتولّد وارتفع: apps/${n}/index.html`);
+      const result = await generateApp(text, kind === "edit" ? existing : null, addLog);
+
+      addLog("⏳ بيترفع على GitHub...");
+      await pushFile(
+        REPO,
+        `apps/${n}/index.html`,
+        result.html,
+        `${kind === "edit" ? "Edit" : "Create"}: ${n}`
+      );
+      addLog(`✅ ${kind === "edit" ? "اتعدّل" : "اتولّد"} بواسطة ${result.provider} وارتفع: apps/${n}/index.html`);
       addLog("🎉 اضغط معاينة تشوفه.");
       if (kind === "edit") setEditText("");
     } catch (e: any) {
@@ -185,11 +161,34 @@ function AppBox({ title, busy, setBusy, onPreview }: BoxProps) {
 
 export default function CreateScreen() {
   const [busy, setBusy] = useState(false);
+  const [name1, setName1] = useState("");
+  const [name2, setName2] = useState("");
+  const [linkLoading, setLinkLoading] = useState<LinkKind | null>(null);
+  const [linkLog, setLinkLog] = useState<string[]>([]);
+
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewName, setPreviewName] = useState("");
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+
+  async function doLink(kind: LinkKind) {
+    if (busy) return;
+    setLinkLog([]);
+    setBusy(true);
+    setLinkLoading(kind);
+    try {
+      await linkApps(kind, cleanName(name1), cleanName(name2), (s) =>
+        setLinkLog((p) => [...p, s])
+      );
+      setLinkLog((p) => [...p, "🎉 اتربط التطبيقين. افتح المعاينة لكل واحد وجرّبه."]);
+    } catch (e: any) {
+      setLinkLog((p) => [...p, `❌ ${e.message}`]);
+    } finally {
+      setLinkLoading(null);
+      setBusy(false);
+    }
+  }
 
   async function openPreview(name: string) {
     setPreviewName(name);
@@ -211,8 +210,62 @@ export default function CreateScreen() {
   return (
     <View style={{ flex: 1 }}>
       <ScrollView contentContainerStyle={styles.container}>
-        <AppBox title="إنشاء التطبيق الأول" busy={busy} setBusy={setBusy} onPreview={openPreview} />
-        <AppBox title="إنشاء التطبيق الثاني" busy={busy} setBusy={setBusy} onPreview={openPreview} />
+        <AppBox
+          title="إنشاء التطبيق الأول"
+          name={name1}
+          setName={setName1}
+          busy={busy}
+          setBusy={setBusy}
+          onPreview={openPreview}
+        />
+
+        <View style={styles.linkBox}>
+          <Text style={styles.linkTitle}>ربط التطبيقين</Text>
+          <Text style={styles.hint}>
+            يستخدم اسمي التطبيقين المكتوبين فوق وتحت، ولازم يكونوا موجودين. الربط يعيد كتابة التطبيقين.
+          </Text>
+
+          <TouchableOpacity
+            style={[styles.linkBtn, busy && linkLoading !== "supabase" && styles.disabled]}
+            onPress={() => doLink("supabase")}
+            disabled={busy}
+          >
+            {linkLoading === "supabase" ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.createBtnText}>ربط التطبيقين عبر Supabase</Text>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.linkBtn, styles.fireBtn, busy && linkLoading !== "firebase" && styles.disabled]}
+            onPress={() => doLink("firebase")}
+            disabled={busy}
+          >
+            {linkLoading === "firebase" ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.createBtnText}>ربط التطبيقين عبر Firebase</Text>
+            )}
+          </TouchableOpacity>
+
+          {linkLog.length > 0 && (
+            <View style={styles.logBox}>
+              {linkLog.map((line, i) => (
+                <Text key={i} style={styles.logLine}>{line}</Text>
+              ))}
+            </View>
+          )}
+        </View>
+
+        <AppBox
+          title="إنشاء التطبيق الثاني"
+          name={name2}
+          setName={setName2}
+          busy={busy}
+          setBusy={setBusy}
+          onPreview={openPreview}
+        />
       </ScrollView>
 
       <Modal visible={previewOpen} animationType="slide" onRequestClose={() => setPreviewOpen(false)}>
@@ -249,6 +302,10 @@ const styles = StyleSheet.create({
   editToggle: { borderWidth: 1, borderColor: "#888", borderRadius: 12, padding: 12, alignItems: "center", marginTop: 10, backgroundColor: "#f6f6f6" },
   editToggleText: { color: "#333", fontWeight: "700" },
   editBox: { marginTop: 4, borderTopWidth: 1, borderColor: "#eee", paddingTop: 4 },
+  linkBox: { borderWidth: 1, borderColor: "#c7d2fe", backgroundColor: "#eef2ff", borderRadius: 14, padding: 14, marginBottom: 20 },
+  linkTitle: { fontWeight: "700", fontSize: 17 },
+  linkBtn: { backgroundColor: "#1d4ed8", borderRadius: 12, padding: 14, alignItems: "center", marginTop: 12 },
+  fireBtn: { backgroundColor: "#c2410c" },
   disabled: { opacity: 0.4 },
   logBox: { marginTop: 16, backgroundColor: "#f3f3f3", borderRadius: 10, padding: 12 },
   logLine: { marginBottom: 4, fontFamily: "monospace", fontSize: 13 },
